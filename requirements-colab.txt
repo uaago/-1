@@ -1,0 +1,4 @@
+# Colab 通常已有这些包。优先使用预装 GPU 版 torch，不强行升级。
+torch>=2.2
+numpy>=1.24
+matplotlib>=3.7
