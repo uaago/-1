@@ -117,3 +117,61 @@
 7. **进程锁与本地自动化测试**
    - 使用 `sqlite3.connect(..., timeout=0)` + `BEGIN EXCLUSIVE` 保护本地实验目录防并发。
    - 提供完整 `unittest`：验证 Epoch 级与 Mid-Epoch Step 级中断恢复逐位一致、改代码/调超参灵活续训、`--strict-resume` 拦截、损坏快照回退、Drive 掉挂载拒绝假写入、多目录工作区同步恢复以及 ZIP/Notebook 校验。
+
+---
+
+## 第五部分：WSL2 + `google-colab-cli` 免 `.ipynb` 命令行/SSH 进阶模式
+
+如果你电脑有 **WSL2（如 Ubuntu 20.04）**，除了在 Windows VS Code 里点 `启动Colab.ipynb`，还可以使用官方 [google-colab-cli](https://github.com/googlecolab/google-colab-cli) 直接在终端操控远程 GPU（**无需改造 `train.py`，与 `.ipynb` 共享同一个 Google Drive 存档目录**）：
+
+### 1. WSL2（Ubuntu 20.04）一次安装注意点
+- 官方 `google-colab-cli` 要求 **Python >= 3.12**，而 Ubuntu 20.04 系统自带 Python 是 3.8，直接 `pip install` 会报错。
+- 推荐按官方推荐用 `uv` 安装（自动带独立 Python 3.12，不动系统环境）：
+  ```bash
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+  source ~/.local/bin/env 2>/dev/null || export PATH="$HOME/.local/bin:$PATH"
+  uv tool install --python 3.12 google-colab-cli
+  ```
+
+### 2. 一键脚本 [scripts/colab_cli_train.sh](scripts/colab_cli_train.sh) 帮你自动串起了官方全链路
+脚本封装了官方推荐的标准生命周期：`colab new` → `colab drivemount`（若终端未自动弹出浏览器，复制终端链接到 Windows 浏览器授权即可）→ `colab upload` 上传临时作业脚本 → `colab ssh` 执行 GitHub 拉取、白名单同步与 `train.py` → 可选 `colab stop`：
+```bash
+cd /mnt/d/DesktopFILES/云端colab远程项目
+
+# 1) 申请 L4，跑完后自动停机释放计算单元（再也不怕忘关机扣额度）
+bash scripts/colab_cli_train.sh --gpu L4 --task classification --run-id cls_cli_001 --auto-stop
+
+# 2) 用 A100 续训之前在启动笔记本跑过的实验（无缝互通）
+bash scripts/colab_cli_train.sh --gpu A100 --task classification --run-id classification_demo_001 -- --resume auto --epochs 70
+
+# 3) 后台挂起训练 / 查余额与 nvidia-smi / 发送 SIGINT 优雅存盘停止
+bash scripts/colab_cli_train.sh --gpu L4 --detach
+bash scripts/colab_cli_train.sh --status
+bash scripts/colab_cli_train.sh --stop-remote
+```
+
+### 3. VS Code Remote-SSH 每日新开与直连方案（像实验室服务器一样用）
+- Windows `~/.ssh/config`（`C:\Users\lenovo1\.ssh\config`）与 WSL2 `~/.ssh/config` 已配置好**不写死会话**的动态别名：
+  - `colab-active`：自动连向当前唯一在跑的任意会话（如手头正开着的 `test1`）；
+  - `colab-a100` / `colab-l4` / `colab-t4`：每次点击自动复用或按需新开对应显卡；
+  - `colab-s-*`：通配符别名（如 `colab-s-exp1`）可同时开多个独立命名会话。
+- **每天新开显卡跑实验只需 3 步**：
+  1. **准备机器与云盘**（在本地 WSL 终端运行）：
+     ```bash
+     bash /mnt/d/DesktopFILES/云端colab远程项目/scripts/colab_ssh_up.sh --gpu A100   # 或 --gpu L4
+     ```
+     它会自动创建对应名称会话（`colab-a100` / `colab-l4`）、挂载 `/content/drive`、拉取最新 GitHub 代码到 `/content/github_repo` 并同步 Drive `project_workspace`。
+  2. **VS Code 一键连入**：点 VS Code 左侧 Remote Explorer → SSH → **`colab-a100`**（或 `colab-l4` / `colab-active`），打开远程目录 **`/content/github_repo`**。
+  3. **在远程终端启动或续训**（利用 [scripts/remote_train.sh](scripts/remote_train.sh)，不写死参数且自动同步代码到 Drive）：
+     ```bash
+     bash scripts/remote_train.sh --task classification --run-id cls_ssh_001
+     bash scripts/remote_train.sh --task classification --run-id classification_demo_001 -- --resume auto --epochs 70 --lr 0.0005
+     bash scripts/remote_train.sh --task regression --run-id reg_ssh_001 --tmux
+     ```
+  4. **结束省额度**：在 WSL 执行 `colab stop -s colab-a100` 释放虚拟机。
+
+### 4. 官方 CLI 常用指令速查
+- `colab new -s <名> --gpu A100`：新建标准 A100 实例（默认不加 `--high-mem` 即 Standard 83.5GB 内存；L4 忽略 `--high-mem`）。
+- `colab drivemount -s <名>`：挂载 `/content/drive`。
+- `colab ssh -s <名>`：直接打开交互式云端 Linux 终端（可实时跑 `watch -n 1 nvidia-smi`）。
+- `colab usage` / `colab stop -s <名>`：查看计算单元余量与手动销毁虚拟机。

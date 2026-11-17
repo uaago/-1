@@ -27,6 +27,9 @@ description: >-
      - **白名单同步至 Drive**：调用 `sync_workspace_to_drive(PROJECT, DRIVE_WORKSPACE)`，通过 `iter_project_files` 仅提取训练必需源码与配置（自动忽略 `.git/`、`tests/`、`docs/` 等），按 SHA-256 逐文件增量同步至 Drive（临时文件 `.syncing` + `os.replace`）。
      - **兜底恢复（免重传）**：当未配置 GitHub 且 `/content` 无本地源码时，从 `DRIVE_WORKSPACE` 调用 `restore_workspace_from_drive` 恢复完整多目录工程到 `/content/<project>`。
   4. **独立子进程启动**：通过 `subprocess.Popen([sys.executable, "-u", "-m", "<pkg>.train", ...], cwd=PROJECT)` 启动训练，流式打印输出，并在捕获 `KeyboardInterrupt` 时向子进程发送 `signal.SIGINT` 后等待其存盘退出。
+- **可选双入口启动器（`scripts/colab_cli_train.sh` + `google-colab-cli`）**：
+  - 在 WSL2 / Linux / macOS 下可通过 `uv tool install --python 3.12 google-colab-cli` 安装官方 CLI（注意 `google-colab-cli` 要求 `Python >= 3.12` 且原生 Windows 尚未获官方正式支持，Windows 应运行在 WSL2 中）。
+  - 通过 `colab new -s <name> --gpu <GPU>` → `colab drivemount -s <name>` → `colab upload` + `colab ssh -s <name> -- bash ...` 驱动与 `.ipynb` 完全相同的 `<pkg>.train` 与 Drive 目录，并支持 `--auto-stop`（完成后自动 `colab stop` 释放实例省计算单元）、`--detach`（云端后台跑）及 `--stop-remote`（发送 `SIGINT` 按 Batch 存盘退出）。
 - **科研主工程包（`<pkg>/`）**：
   - 按职责拆分为多目录子包（例如 `models/`、`datasets/`、`utils/`、`checkpoint.py`、`train.py`），在 `train.py` 中通过包内相对导入组合运行。
   - 源码递归扫描与 ZIP 打包脚本（如 `build_colab_zip.py`）须使用 `rglob("*.py")`（排除 `__pycache__`）覆盖所有子目录。
@@ -81,7 +84,7 @@ description: >-
 - 检查点与 Drive 校验备份：[colab_training_demo/checkpoint.py](../../colab_training_demo/checkpoint.py)
 - 多目录模块示例：[colab_training_demo/models/mlp.py](../../colab_training_demo/models/mlp.py)、[colab_training_demo/datasets/synthetic.py](../../colab_training_demo/datasets/synthetic.py)
 - 代码同步与中间状态工具：[colab_training_demo/utils/code_sync.py](../../colab_training_demo/utils/code_sync.py)、[colab_training_demo/utils/state_bag.py](../../colab_training_demo/utils/state_bag.py)
-- 云端启动器与 ZIP 打包：[启动Colab.ipynb](../../启动Colab.ipynb)、[build_colab_zip.py](../../build_colab_zip.py)
+- 云端启动器与 ZIP 打包：[启动Colab.ipynb](../../启动Colab.ipynb)、[scripts/colab_cli_train.sh](../../scripts/colab_cli_train.sh)、[scripts/colab_ssh_up.sh](../../scripts/colab_ssh_up.sh)、[scripts/remote_train.sh](../../scripts/remote_train.sh)、[build_colab_zip.py](../../build_colab_zip.py)
 - 自动化测试套件：[tests/test_training.py](../../tests/test_training.py)
 - 用户操作手册：[Colab远程科研训练_SKILL指南.md](../../Colab远程科研训练_SKILL指南.md)
 

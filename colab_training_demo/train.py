@@ -1,4 +1,13 @@
-"""训练主入口：python -u -m colab_training_demo.train ..."""
+"""训练主入口：支持 python -u -m colab_training_demo.train ... 及直接运行 python colab_training_demo/train.py。"""
+
+if __package__ in (None, ""):
+    import sys as _sys
+    from pathlib import Path as _Path
+
+    _root = str(_Path(__file__).resolve().parents[1])
+    if _root not in _sys.path:
+        _sys.path.insert(0, _root)
+    __package__ = "colab_training_demo"
 
 import argparse
 from contextlib import contextmanager
@@ -244,6 +253,27 @@ def _sync_and_prune(snapshot, run_dir, persistent, keep_last):
     return synced
 
 
+DEFAULT_DRIVE_PERSISTENT = Path("/content/drive/MyDrive/Colab_Training_Demo/runs")
+
+
+def _resolve_persistent_root(args):
+    if getattr(args, "no_persistent", False):
+        return None
+    if args.persistent_root:
+        return args.persistent_root
+    drive_mount = Path("/content/drive")
+    if os.path.ismount(drive_mount) and (drive_mount / "MyDrive").is_dir():
+        print(f"[auto-drive] 已自动绑定 Google Drive 持久目录: {DEFAULT_DRIVE_PERSISTENT}", flush=True)
+        return str(DEFAULT_DRIVE_PERSISTENT)
+    if Path("/content").is_dir():
+        print(
+            "[warning] 当前处于 Colab 容器但未检测到 Google Drive 挂载；"
+            "模型与检查点将仅保存在临时盘。请先执行 colab drivemount 或传入 --persistent-root。",
+            flush=True,
+        )
+    return None
+
+
 def train(args):
     config = apply_cli_overrides(read_config(args.config), args)
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,79}", args.run_id):
@@ -266,7 +296,8 @@ def train(args):
     if device.type == "cpu":
         torch.use_deterministic_algorithms(True)
     run_dir = Path(args.local_root).resolve() / args.run_id
-    persistent = Path(args.persistent_root).resolve() / args.run_id if args.persistent_root else None
+    resolved_persistent = _resolve_persistent_root(args)
+    persistent = Path(resolved_persistent).resolve() / args.run_id if resolved_persistent else None
     if persistent == run_dir:
         raise ValueError("临时训练目录与持久目录必须分开")
     if persistent and (persistent in run_dir.parents or run_dir in persistent.parents):
@@ -675,12 +706,56 @@ def run_locked(args, config, device, run_dir, persistent):
         print(f"[done] 本次完成到 epoch={last_completed_epoch}; 最佳验证损失={best_loss:.6f}", flush=True)
 
 
+def _resolve_interactive_args(args, parser, default_config):
+    if args.run_id:
+        return args
+    if sys.stdin is None or not sys.stdin.isatty():
+        parser.error("非交互模式下必须指定 --run-id")
+    print("=== 直接运行模式（交互式配置）===", flush=True)
+    try:
+        if args.config == default_config:
+            choice = input("选择任务 [1] regression  [2] classification (直接回车=1): ").strip()
+            task = "classification" if choice == "2" else "regression"
+            args.config = str(ROOT / "configs" / f"{task}.json")
+        else:
+            task = Path(args.config).stem
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        default_id = f"{task}_direct_{stamp}"
+        entered_id = input(f"输入实验名 RUN_ID (回车默认 {default_id}；填已有实验名可续训): ").strip()
+        args.run_id = entered_id or default_id
+
+        resolved_persistent = _resolve_persistent_root(args)
+        if resolved_persistent and not args.persistent_root:
+            args.persistent_root = resolved_persistent
+        exists_local = (Path(args.local_root).resolve() / args.run_id / "config.json").is_file()
+        exists_drive = bool(resolved_persistent) and (Path(resolved_persistent).resolve() / args.run_id).exists()
+        if (exists_local or exists_drive) and args.resume == "never":
+            ans = input(f"检测到已有实验 '{args.run_id}'，是否从上次断点续训? [Y/n] (直接回车=是): ").strip().lower()
+            if ans in ("", "y", "yes"):
+                args.resume = "auto"
+
+        if args.epochs is None:
+            ep_raw = input("目标总轮数 epochs (直接回车保持配置默认值): ").strip()
+            if ep_raw:
+                args.epochs = int(ep_raw)
+        if args.lr is None:
+            lr_raw = input("学习率 lr (直接回车保持配置默认值): ").strip()
+            if lr_raw:
+                args.lr = float(lr_raw)
+    except EOFError:
+        parser.error("非交互模式下必须指定 --run-id")
+    return args
+
+
 def main():
+    default_config = str(ROOT / "configs" / "regression.json")
+    default_local = "/content/runs" if Path("/content").is_dir() else str(ROOT / "runs")
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", default=str(ROOT / "configs" / "regression.json"))
-    parser.add_argument("--run-id", required=True)
-    parser.add_argument("--local-root", default="/content/runs")
-    parser.add_argument("--persistent-root", default=None, help="Drive 结果根目录；本地测试可省略")
+    parser.add_argument("--config", default=default_config)
+    parser.add_argument("--run-id", default=None, help="实验名；直接运行且未传入时将进入交互配置")
+    parser.add_argument("--local-root", default=default_local)
+    parser.add_argument("--persistent-root", default=None, help="Drive 结果根目录；在 Colab 挂载 Drive 后默认自动使用")
+    parser.add_argument("--no-persistent", action="store_true", help="禁用自动绑定 Google Drive，仅写本地目录")
     parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto")
     parser.add_argument("--resume", choices=("never", "auto"), default="never")
     parser.add_argument("--stop-after-epoch", type=int, default=None, help="完成指定轮次后退出，用于恢复演练")
@@ -691,6 +766,7 @@ def main():
     parser.add_argument("--batch-size", type=int, default=None, help="覆盖配置中的 batch_size")
     parser.add_argument("--strict-resume", action="store_true", help="开启严格模式：源码或超参变动时拒绝续训")
     args = parser.parse_args()
+    args = _resolve_interactive_args(args, parser, default_config)
     if args.stop_after_epoch is not None and args.stop_after_epoch <= 0:
         parser.error("stop-after-epoch 必须大于 0")
     if args.stop_after_step is not None and args.stop_after_step <= 0:

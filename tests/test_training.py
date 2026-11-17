@@ -14,7 +14,7 @@ from unittest import mock
 import torch
 
 from colab_training_demo import checkpoint
-from colab_training_demo.train import training_lock
+from colab_training_demo.train import DEFAULT_DRIVE_PERSISTENT, _resolve_persistent_root, training_lock
 from colab_training_demo.utils.code_sync import (
     restore_workspace_from_drive,
     sync_workspace_to_drive,
@@ -58,6 +58,8 @@ class TrainingTests(unittest.TestCase):
         ]
         if persistent:
             command += ["--persistent-root", str(cls.work / persistent)]
+        else:
+            command += ["--no-persistent"]
         result = subprocess.run(
             command + list(extra),
             cwd=ROOT,
@@ -309,6 +311,60 @@ class TrainingTests(unittest.TestCase):
         self.assertEqual(state["epoch"], 12)
         complete = [p for p in checkpoint.snapshots(self.work / "drive/classification") if checkpoint.valid_snapshot(p)]
         self.assertEqual(len(complete), 3)
+
+    def test_direct_script_execution_and_auto_drive(self):
+        direct_cmd = [
+            sys.executable,
+            "-u",
+            str(ROOT / "colab_training_demo" / "train.py"),
+            "--config",
+            str(self.config),
+            "--run-id",
+            "direct_script_run",
+            "--local-root",
+            str(self.work / "direct_local"),
+            "--persistent-root",
+            str(self.work / "direct_drive"),
+            "--device",
+            "cpu",
+            "--epochs",
+            "2",
+        ]
+        result = subprocess.run(
+            direct_cmd,
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=90,
+            env={**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"},
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        drive_out = self.work / "direct_drive/direct_script_run"
+        self.assertTrue((drive_out / "final_model.pt").is_file())
+        self.assertTrue((drive_out / "best_model.pt").is_file())
+        self.assertTrue((drive_out / "intermediate_state.pt").is_file())
+        self.assertTrue(checkpoint.valid_snapshot(drive_out / "checkpoints/epoch_00000002"))
+
+        non_tty = subprocess.run(
+            [sys.executable, "-u", str(ROOT / "colab_training_demo" / "train.py")],
+            cwd=ROOT,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=30,
+        )
+        self.assertNotEqual(non_tty.returncode, 0)
+        self.assertIn("run-id", non_tty.stderr)
+
+        ns = type("Args", (), {"persistent_root": None, "no_persistent": False})()
+        with mock.patch("colab_training_demo.train.os.path.ismount", return_value=True), mock.patch.object(
+            Path, "is_dir", return_value=True
+        ):
+            self.assertEqual(_resolve_persistent_root(ns), str(DEFAULT_DRIVE_PERSISTENT))
+        ns_off = type("Args", (), {"persistent_root": None, "no_persistent": True})()
+        self.assertIsNone(_resolve_persistent_root(ns_off))
 
 
 if __name__ == "__main__":

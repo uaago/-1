@@ -1,0 +1,62 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "1. 训练 / 断点续训（终端交互选参数，在 Colab 自动存 Drive）",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "colab_training_demo.train",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "args": []
+    },
+    {
+      "name": "2. 弹窗指定任务/实验名/轮数启动（支持断点调试）",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "colab_training_demo.train",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "args": [
+        "--config",
+        "${workspaceFolder}/configs/${input:task}.json",
+        "--run-id",
+        "${input:runId}",
+        "--resume",
+        "${input:resumeMode}",
+        "--epochs",
+        "${input:targetEpochs}"
+      ]
+    }
+  ],
+  "inputs": [
+    {
+      "id": "task",
+      "type": "pickString",
+      "description": "选择训练任务配置文件",
+      "options": ["regression", "classification"],
+      "default": "classification"
+    },
+    {
+      "id": "runId",
+      "type": "promptString",
+      "description": "输入实验名 RUN_ID（新实验改新名字；续训填原名字如 classification_demo_001）",
+      "default": "classification_demo_001"
+    },
+    {
+      "id": "resumeMode",
+      "type": "pickString",
+      "description": "启动模式（auto=接着已有检查点续训，never=从第1轮开新实验）",
+      "options": ["auto", "never"],
+      "default": "auto"
+    },
+    {
+      "id": "targetEpochs",
+      "type": "promptString",
+      "description": "目标总轮数（续训时需大于已完成轮数）",
+      "default": "65"
+    }
+  ]
+}

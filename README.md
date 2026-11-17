@@ -159,6 +159,46 @@ with zipfile.ZipFile(archive) as bundle:
 
 4. 第 3 步设回 `PROJECT = None` 后继续运行第 3～8 步。
 
+## WSL2 / Linux / macOS 进阶：`google-colab-cli` 免 `.ipynb` 命令行启动
+
+如果你在 WSL2（Ubuntu）、Linux 或 macOS 终端中操作，官方 `google-colab-cli` 可以不打开 `.ipynb` 笔记本，直接通过 `colab new` + `colab drivemount` + `colab ssh` 驱动本项目同一套 `train.py` 与 Google Drive 存档（且两者云盘检查点 100% 互通）：
+
+1. **在 WSL2（Ubuntu 20.04）安装**：官方要求 Python `>= 3.12`，建议使用 `uv` 自动独立托管 Python 3.12（避免与 Ubuntu 20.04 自带 Python 3.8 冲突）：
+   ```bash
+   curl -LsSf https://astral.sh/uv/install.sh | sh
+   export PATH="$HOME/.local/bin:$PATH"
+   uv tool install --python 3.12 google-colab-cli
+   ```
+2. **使用仓库自带的一键脚本 [scripts/colab_cli_train.sh](scripts/colab_cli_train.sh)**：
+   ```bash
+   cd /mnt/d/DesktopFILES/云端colab远程项目
+   # 首次运行（分配 L4 GPU、引导 Drive 授权挂载、拉取 GitHub 并跑完自动释放实例）
+   bash scripts/colab_cli_train.sh --gpu L4 --task classification --run-id cls_cli_001 --auto-stop
+
+   # 接着之前笔记本跑过的存档继续在 A100 上训到 70 轮
+   bash scripts/colab_cli_train.sh --gpu A100 --task classification --run-id classification_demo_001 -- --resume auto --epochs 70 --lr 0.0005
+
+   # 云端后台运行 + 随时查看 GPU/进程 + 优雅按 Batch 存盘停止
+   bash scripts/colab_cli_train.sh --gpu L4 --task regression --run-id reg_bg_001 --detach
+   bash scripts/colab_cli_train.sh --status
+   bash scripts/colab_cli_train.sh --stop-remote
+   ```
+3. **每日新开并在 VS Code Remote-SSH 直接打开远程代码与训练（推荐实验室服务器手感）**：
+   - 本地 `C:\Users\<用户>\.ssh\config` 已预置动态别名 `colab-active`、`colab-a100`、`colab-l4`、`colab-t4` 与通配符 `colab-s-*`（通过 `wsl.exe` 桥接 `colab ssh --proxy-mode`）。
+   - 每天新开机器 2 步直达：
+     ```bash
+     # 步骤 A（本地 WSL 终端）：按需申请显卡 + 挂载 Drive + GitHub 拉取到 /content/github_repo
+     bash scripts/colab_ssh_up.sh --gpu A100   # 或 --gpu L4 / -s colab-s-exp1 --gpu A100
+     ```
+     接着在 **VS Code 左侧 Remote Explorer → SSH** 点击对应的 **`colab-a100`**（或 `colab-l4` / `colab-active`），打开远程目录 `/content/github_repo`，在 VS Code 远程终端运行：
+     ```bash
+     # 步骤 B（VS Code Remote-SSH 云端终端）：不写死任务/实验名，直接开跑或续训
+     bash scripts/remote_train.sh --task classification --run-id cls_ssh_001
+     bash scripts/remote_train.sh --task classification --run-id classification_demo_001 -- --resume auto --epochs 70 --lr 0.0005
+     bash scripts/remote_train.sh --task classification --run-id cls_ssh_001 --tmux   # 后台持久化跑
+     ```
+   - 不再使用时在本地 WSL 运行 `colab stop -s colab-a100` 释放实例即可。
+
 ## 本地验证命令
 
 ```powershell
